@@ -2,39 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Upload Files → /HAL JSON</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simple Uploader</title>
   <script src="https://js.bytescale.com/upload-widget/v4"></script>
-  <style>
-    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#f8fafc; color:#0b1220; }
-    .wrap { max-width:860px; margin:48px auto; padding:0 20px; }
-    .card { background:#fff; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,.07); padding:24px; }
-    .dz { height:360px; border-radius:14px; overflow:hidden; }
-    pre { margin-top:12px; padding:10px; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:8px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; }
-  </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Upload Any Files</h1>
-      <p>Destination: <code>/HAL JSON/&lt;original-file-name&gt;/</code> (a new folder is created per file).</p>
-      <div id="dz" class="dz"></div>
-      <pre id="out">Uploaded file URLs will appear here…</pre>
-    </div>
-  </div>
+  <h1>Upload Files</h1>
+  <div id="uploader"></div>
+  <pre id="out">Uploaded URLs will appear here…</pre>
 
   <script>
     Bytescale.UploadWidget.open({
       apiKey: "public_kW2K8YP5GHft3yZZtLyk6P3MTtRC",
       layout: "inline",
-      container: "#dz",
-      // Each file gets its own folder named after the file:
-      path: { path: "/HAL JSON/{ORIGINAL_FILE_NAME}" },
-      maxFileCount: 25,
+      container: "#uploader",
+      path: { path: "/HAL JSON/" }, // all files go directly here
       showFinishButton: true,
       onUpdate: ({ uploadedFiles }) => {
-        const urls = uploadedFiles.map(f => f.fileUrl).join("\n");
-        document.getElementById("out").textContent = urls || "No files uploaded yet.";
+        document.getElementById("out").textContent =
+          uploadedFiles.map(f => f.fileUrl).join("\n") || "No files yet.";
       }
     });
   </script>
