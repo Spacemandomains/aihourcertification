@@ -1,1 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Upload JSON → /HAL JSON</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+  <meta http-equiv="Pragma" content="no-cache"/>
+  <meta http-equiv="Expires" content="0"/>
+  <script src="https://js.bytescale.com/upload-widget/v4"></script>
+  <style>
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#f8fafc; color:#0b1220; }
+    .wrap { max-width:860px; margin:48px auto; padding:0 20px; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,.07); padding:24px; }
+    .dz { height:360px; border-radius:14px; overflow:hidden; }
+    textarea { width:100%; min-height:120px; margin-top:12px; border:1px solid #e5e7eb; background:#f3f4f6; border-radius:10px; padding:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .hint { color:#64748b; font-size:.95rem; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Upload JSON Files</h1>
+      <p class="hint">Destination: <code>/HAL JSON/{ORIGINAL_FILE_NAME}/</code> (folder per file). Accepts any file; no syntax checking.</p>
+      <div id="dz" class="dz"></div>
+      <div class="hint" id="status">Idle</div>
+      <textarea id="urls" readonly placeholder="Uploaded URLs will appear here…"></textarea>
+    </div>
+  </div>
 
+  <script>
+    const options = {
+      apiKey: "public_kW2K8YP5GHft3yZZtLyk6P3MTtRC",
+      layout: "inline",
+      container: "#dz",
+      path: { path: "/HAL JSON/{ORIGINAL_FILE_NAME}" }, // folder named after file
+      maxFileCount: 25,
+      // NO onPreUpload -> no parsing, no validation
+      showFinishButton: true,
+      onUpdate: ({ uploadedFiles, pendingFiles, failedFiles }) => {
+        const status = document.getElementById("status");
+        const urlsEl = document.getElementById("urls");
+        // show URLs as they complete
+        const urls = uploadedFiles.map(f => f.fileUrl);
+        if (urls.length) {
+          urlsEl.value = (urlsEl.value ? urlsEl.value + "\n" : "") + urls.join("\n");
+        }
+        status.textContent = `Uploaded: ${uploadedFiles.length} | Pending: ${pendingFiles.length} | Failed: ${failedFiles.length}`;
+        if (failedFiles.length) console.error("Failed files:", failedFiles);
+      }
+    };
+
+    // Initialize the inline widget once
+    Bytescale.UploadWidget.open(options).catch(err => {
+      document.getElementById("status").textContent = `Init error: ${err?.message || err}`;
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
