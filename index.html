@@ -2,12 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Upload JSON → /HAL JSON/<file-name>/</title>
+  <title>Upload JSON → /HAL JSON</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://js.bytescale.com/upload-widget/v4"></script>
   <style>
     :root { --accent:#0f172a; --bg:#f8fafc; --card:#fff; }
-    * { box-sizing:border-box; }
     body { margin:0; background:var(--bg); color:#0b1220; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
     .wrap { max-width:920px; margin:48px auto; padding:0 20px; }
     .card { background:var(--card); border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,.07); padding:24px; }
@@ -33,7 +32,7 @@
       <h1>Upload JSON Files</h1>
       <p class="sub">
         Destination: <code>/HAL JSON/&lt;file-name&gt;/&lt;file-name&gt;</code><br/>
-        Drag &amp; drop or click. Accepts <strong>.json</strong> and <em>.jsonl</em>. Resumable for large files.
+        Drag &amp; drop or click. Any <strong>.json</strong> or <strong>.jsonl</strong> file is accepted.
       </p>
 
       <div id="dropzone" class="dz"></div>
@@ -51,80 +50,61 @@
   </div>
 
   <script>
-    // ---- Your PUBLIC key (browser-safe). Do not put secrets in client code. ----
     const BYTESCALE_PUBLIC_API_KEY = "public_kW2K8YP5GHft3yZZtLyk6P3MTtRC";
 
-    // Folder-per-file: put each upload in `/HAL JSON/<original-file-name>/`
-    // The widget will save the file *inside* that folder with its original name.
-    // Note: spaces and special chars are URL-encoded (e.g., `%20`).
+    // Each file goes into its own folder named after the file
     const UPLOAD_PATH = { path: "/HAL JSON/{ORIGINAL_FILE_NAME}" };
 
-    // Helper: human-readable sizes
-    const fmt = (n) => {
-      if (!Number.isFinite(n)) return "";
-      const u = ["B","KB","MB","GB","TB"];
-      let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-      return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
-    };
-
-    // JSON/JSONL validation (lenient MIME; rely on extension if needed)
-    async function validateJsonFile(file) {
+    // Simple check: only allow .json / .jsonl extensions
+    async function allowJsonFiles(file) {
       const name = (file.name || "").toLowerCase();
-      const type = (file.type || "").toLowerCase();
-      const looksJson = name.endsWith(".json") || name.endsWith(".jsonl");
-      const mimeOk = type === "application/json" || type === "application/x-ndjson" || type === "text/plain";
-      if (!looksJson && !mimeOk) {
-        return { errorMessage: "Only .json or .jsonl files are allowed.", transformedFile: null };
+      if (name.endsWith(".json") || name.endsWith(".jsonl")) {
+        return { transformedFile: file };
       }
-      return { transformedFile: file };
+      return { errorMessage: "Only .json or .jsonl files are allowed." };
     }
 
-    // Progress UI bookkeeping
-    const fileMap = new Map(); // fileId -> { size, el, progressEl }
+    const fileMap = new Map(); // track UI rows
 
     const baseOptions = {
       apiKey: BYTESCALE_PUBLIC_API_KEY,
-      path: UPLOAD_PATH,         // <- per-file folder named after the file
-      maxFileCount: 25,          // batch uploads supported
-      // maxFileSizeBytes: (set this if you want a cap)
-      onPreUpload: validateJsonFile,
+      path: UPLOAD_PATH,
+      maxFileCount: 25,
+      onPreUpload: allowJsonFiles,   // no parsing, just extension check
       showFinishButton: true,
       onUpdate: ({ uploadedFiles, pendingFiles, failedFiles }) => {
         const statusEl = document.getElementById("status");
         const urlsEl = document.getElementById("urls");
-        const fileList = document.getElementById("fileList");
+        const list = document.getElementById("fileList");
 
-        // Add UI rows for new files
         [...pendingFiles, ...uploadedFiles, ...failedFiles].forEach(f => {
           if (!fileMap.has(f.fileId)) {
             const row = document.createElement("div");
             row.className = "item";
             const left = document.createElement("div");
-            left.innerHTML = `<div class="name">${f.fileName || "untitled.json"}</div>
-                              <div class="meta">${fmt(f.fileSizeBytes || 0)}</div>`;
+            left.innerHTML = `<div class="name">${f.fileName}</div>
+                              <div class="meta">${(f.fileSizeBytes || 0).toLocaleString()} bytes</div>`;
             const right = document.createElement("div");
             const prog = document.createElement("progress");
             prog.max = 1; prog.value = 0;
             right.appendChild(prog);
             row.appendChild(left);
             row.appendChild(right);
-            fileList.appendChild(row);
+            list.appendChild(row);
             fileMap.set(f.fileId, { size: f.fileSizeBytes, el: row, progressEl: prog });
           }
         });
 
-        // Update progress
         pendingFiles.forEach(f => {
           const rec = fileMap.get(f.fileId);
           if (rec && typeof f.progress === "number") rec.progressEl.value = f.progress;
         });
 
-        // Mark uploaded + list URLs
         uploadedFiles.forEach(f => {
           const rec = fileMap.get(f.fileId);
           if (rec) {
             rec.progressEl.value = 1;
-            rec.el.querySelector(".meta").textContent = `${fmt(rec.size || 0)} • Uploaded`;
+            rec.el.querySelector(".meta").textContent = `${(rec.size || 0).toLocaleString()} bytes • Uploaded`;
           }
         });
 
@@ -133,7 +113,6 @@
           urlsEl.value = (urlsEl.value ? urlsEl.value + "\n" : "") + urls.join("\n");
         }
 
-        // Status line
         const up = uploadedFiles.length, pend = pendingFiles.length, fail = failedFiles.length;
         statusEl.textContent = `Uploaded: ${up} | Pending: ${pend} | Failed: ${fail}`;
         statusEl.className = "hint " + (fail > 0 ? "err" : (pend === 0 && up > 0 ? "ok" : ""));
@@ -145,22 +124,13 @@
       ...baseOptions,
       layout: "inline",
       container: "#dropzone"
-    }).catch(err => {
-      const statusEl = document.getElementById("status");
-      statusEl.textContent = `Error: ${err?.message || err}`;
-      statusEl.className = "hint err";
     });
 
     // Optional modal
     document.getElementById("openModal").addEventListener("click", () => {
       Bytescale.UploadWidget.open({
         ...baseOptions,
-        layout: "modal",
-        container: undefined
-      }).catch(err => {
-        const statusEl = document.getElementById("status");
-        statusEl.textContent = `Error: ${err?.message || err}`;
-        statusEl.className = "hint err";
+        layout: "modal"
       });
     });
   </script>
