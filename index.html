@@ -65,7 +65,7 @@
       const fileUrl = toOriginalUrl(info.uuid);
       const name = info.name || 'uploaded.json';
 
-      // Only proceed if it's (likely) JSON
+      // Ensure it's JSON
       const isJson = (info?.mimeType || '').includes('json') || name.toLowerCase().endsWith('.json');
       if (!isJson) {
         alert('Please upload a JSON file (your ChatGPT export).');
