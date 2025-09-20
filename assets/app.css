@@ -4,10 +4,7 @@
   --muted: #6b7280;
   --card: #ffffff;
   --border: #e5e7eb;
-  --accent: #2563eb;
   --accent-weak: #eff6ff;
-  --ok: #047857;
-  --err: #b00020;
 }
 
 * { box-sizing: border-box; }
