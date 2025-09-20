@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Your ChatGPT Hours</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="container">
+    <h1>ChatGPT Usage Summary</h1>
+    <p class="muted" id="fileMeta">Analyzing…</p>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <div id="status" class="status">Requesting analysis…</div>
+
+      <div id="results" class="grid two" hidden>
+        <div class="stat">
+          <div class="label">Total Hours (Local)</div>
+          <div class="value" id="hoursLocal">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Sessions (Local)</div>
+          <div class="value" id="sessionsLocal">—</div>
+        </div>
+
+        <div class="stat">
+          <div class="label">Total Hours (OpenAI)</div>
+          <div class="value" id="hoursAI">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Sessions (OpenAI)</div>
+          <div class="value" id="sessionsAI">—</div>
+        </div>
+      </div>
+
+      <div id="timeframe" class="meta" hidden>
+        <div><strong>First activity:</strong> <span id="firstTs">—</span></div>
+        <div><strong>Last activity:</strong> <span id="lastTs">—</span></div>
+      </div>
+
+      <div id="raw" class="code card subtle" hidden>
+        <div class="label">Raw response</div>
+        <pre id="rawJson"></pre>
+      </div>
+
+      <div class="actions">
+        <a class="btn" href="./index.html">Upload another file</a>
+        <button class="btn ghost" id="toggleRaw">Show raw</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="container footnote">
+    Hours are computed with a 30-minute session gap rule.
+  </footer>
+
+  <script>
+    // <<< REQUIRED: set this to your deployed Worker URL >>>
+    const WORKER = 'YOUR_WORKER_URL'; // e.g. https://ai-hours.your-subdomain.workers.dev
+
+    const qs = new URLSearchParams(window.location.search);
+    const fileUrl = qs.get('fileUrl');
+    const name = qs.get('name') || 'uploaded.json';
+
+    const $ = (id) => document.getElementById(id);
+    const statusEl   = $('status');
+    const resultsEl  = $('results');
+    const timeframe  = $('timeframe');
+    const rawBlock   = $('raw');
+    const rawJson    = $('rawJson');
+
+    $('fileMeta').textContent = `File: ${name}`;
+    $('toggleRaw').addEventListener('click', () => {
+      rawBlock.hidden = !rawBlock.hidden;
+      $('toggleRaw').textContent = rawBlock.hidden ? 'Show raw' : 'Hide raw';
+    });
+
+    (async function run() {
+      if (!fileUrl) {
+        statusEl.textContent = 'Missing fileUrl in query string.';
+        return;
+      }
+      try {
+        statusEl.textContent = 'Analyzing with local parser + OpenAI…';
+
+        const res = await fetch(`${WORKER.replace(/\/$/, '')}/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileUrl,
+            filename: name,
+            useOpenAI: true
+          })
+        });
+
+        const data = await res.json();
+        rawJson.textContent = JSON.stringify(data, null, 2);
+        if (!res.ok) {
+          statusEl.textContent = 'Error: ' + (data.error || 'analysis failed');
+          rawBlock.hidden = false;
+          return;
+        }
+
+        // Local results
+        const local = data.local || {};
+        $('hoursLocal').textContent    = (local.totalHours ?? 0).toFixed(2);
+        $('sessionsLocal').textContent = local.sessions ?? 0;
+
+        // OpenAI results (optional)
+        const ai = data.openai && !data.openai.error ? data.openai : null;
+        $('hoursAI').textContent       = ai?.total_hours != null ? Number(ai.total_hours).toFixed(2) : '—';
+        $('sessionsAI').textContent    = ai?.sessions ?? '—';
+
+        // Timeframe
+        if (local.firstTimestamp || local.lastTimestamp) {
+          $('firstTs').textContent = local.firstTimestamp ? new Date(local.firstTimestamp).toLocaleString() : '—';
+          $('lastTs').textContent  = local.lastTimestamp  ? new Date(local.lastTimestamp).toLocaleString()  : '—';
+          timeframe.hidden = false;
+        }
+
+        statusEl.textContent = 'Done.';
+        resultsEl.hidden = false;
+
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        rawBlock.hidden = false;
+      }
+    })();
+  </script>
+</body>
+</html>
