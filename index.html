@@ -2,149 +2,82 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Uploadcare Uploader</title>
+  <title>Upload JSON for ChatGPT Hours</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <!-- Uploadcare File Uploader (Regular) styles -->
+  <!-- Uploadcare Regular Uploader styles -->
   <link
     rel="stylesheet"
     href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.css"
-  >
+  />
 
-  <style>
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      max-width: 820px;
-      margin: 40px auto;
-      padding: 0 20px 60px;
-      background: #fafafa;
-    }
-    header { margin-bottom: 16px; }
-    h1 { font-size: 22px; margin: 0 0 6px; }
-    p.hint { color: #555; margin: 0 0 20px; }
-    .card {
-      background: #fff; border-radius: 12px; padding: 16px 18px; box-shadow: 0 2px 12px rgba(0,0,0,.06);
-      margin-top: 18px;
-    }
-    .file-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-    .url { font-size: 13px; color: #234; background: #f2f6ff; padding: 8px 10px; border-radius: 8px; }
-    .btn { padding: 8px 10px; border-radius: 8px; border: 1px solid #d2d7e0; background: #fff; cursor: pointer; }
-    .btn:hover { background:#f3f5f8; }
-    .grid { display: grid; gap: 10px; }
-    .small { color:#556; font-size: 12px; }
-    .ok { color: #0a7a2a; }
-    .err { color: #b00020; }
-  </style>
+  <link rel="stylesheet" href="./assets/app.css" />
 </head>
 <body>
-  <header>
-    <h1>Upload a File</h1>
-    <p class="hint">Large files supported. You’ll get the original URL (best for AI) and a thumbnail URL (best for UI).</p>
+  <header class="container">
+    <h1>Upload your ChatGPT JSON</h1>
+    <p class="muted">We’ll analyze it on the next page and show total hours used.</p>
   </header>
 
-  <!-- 1) Define components -->
-  <script type="module">
-    import * as UC from 'https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.js';
-    UC.defineComponents(UC);
-  </script>
+  <main class="container card">
+    <!-- 1) Define components -->
+    <script type="module">
+      import * as UC from 'https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.js';
+      UC.defineComponents(UC);
+    </script>
 
-  <!-- 2) Global config (context) -->
-  <uc-config
-    ctx-name="my-uploader"
-    pubkey="b00c50b261574b46682e"
-    source-list="local"
-    confirm-upload="true"
-    multiple="true"
-    max-local-file-size-bytes="0"
-  ></uc-config>
+    <!-- 2) Global config -->
+    <uc-config
+      ctx-name="my-uploader"
+      pubkey="b00c50b261574b46682e"
+      source-list="local"
+      confirm-upload="true"
+      multiple="false"
+      max-local-file-size-bytes="0"
+    ></uc-config>
 
-  <!-- 3) The actual uploader widget -->
-  <uc-file-uploader-regular
-    ctx-name="my-uploader"
-    class="uc-light"
-  ></uc-file-uploader-regular>
+    <!-- 3) Uploader -->
+    <uc-file-uploader-regular
+      ctx-name="my-uploader"
+      class="uc-light"
+    ></uc-file-uploader-regular>
 
-  <!-- 4) Event bridge (keeps context alive across components) -->
-  <uc-upload-ctx-provider ctx-name="my-uploader"></uc-upload-ctx-provider>
+    <!-- 4) Context provider -->
+    <uc-upload-ctx-provider ctx-name="my-uploader"></uc-upload-ctx-provider>
 
-  <!-- Results -->
-  <section class="card" id="results" hidden>
-    <div id="status" class="small"></div>
-    <div id="list" class="grid"></div>
-  </section>
+    <p class="hint">Tip: upload the exported conversations JSON from ChatGPT.</p>
+  </main>
+
+  <footer class="container footnote">
+    Your file uploads to Uploadcare. We only pass its URL to the analyzer.
+  </footer>
 
   <script>
-    const $ = (sel) => document.querySelector(sel);
-    const results = $('#results');
-    const list = $('#list');
-    const statusEl = $('#status');
-
-    const makeThumbUrl = (uuid) =>
-      `https://ucarecdn.com/${uuid}/-/resize/600x/-/quality/smart/-/format/auto/`;
-
-    async function copy(text, btn) {
-      try {
-        await navigator.clipboard.writeText(text);
-        if (btn) {
-          const prev = btn.textContent;
-          btn.textContent = 'Copied!';
-          setTimeout(() => (btn.textContent = prev), 900);
-        }
-      } catch {}
-    }
-
+    // After a successful upload, redirect to results.html with the file URL & name
     const ctx = document.querySelector('uc-upload-ctx-provider[ctx-name="my-uploader"]');
+
+    function toOriginalUrl(uuid) {
+      return `https://ucarecdn.com/${uuid}/`; // raw/original — best for AI/analysis
+    }
 
     ctx.addEventListener('file-upload-success', (ev) => {
       const info = ev.detail;
-      const uuid = info.uuid;
-      const name = info.name;
-      const size = info.size;
-      const originalUrl = `https://ucarecdn.com/${uuid}/`;
-      const thumbUrl = makeThumbUrl(uuid);
+      const fileUrl = toOriginalUrl(info.uuid);
+      const name = info.name || 'uploaded.json';
 
-      results.hidden = false;
-      statusEl.innerHTML = `<span class="ok">Uploaded:</span> ${name} (${(size/1048576).toFixed(2)} MB)`;
+      // Only proceed if it's (likely) JSON
+      const isJson = (info?.mimeType || '').includes('json') || name.toLowerCase().endsWith('.json');
+      if (!isJson) {
+        alert('Please upload a JSON file (your ChatGPT export).');
+        return;
+      }
 
-      const row = document.createElement('div');
-      row.className = 'grid card';
-      row.innerHTML = `
-        <div class="file-row">
-          <div>
-            <div class="small mono">${name}</div>
-            <div class="url mono">Original (UUID): ${originalUrl}</div>
-          </div>
-          <button class="btn" data-copy="${originalUrl}">Copy</button>
-        </div>
-        <div class="file-row">
-          <div>
-            <div class="small">Thumbnail (Output URL)</div>
-            <div class="url mono">${thumbUrl}</div>
-          </div>
-          <button class="btn" data-copy="${thumbUrl}">Copy</button>
-        </div>
-        <div class="small">
-          <a href="${originalUrl}" target="_blank">Open original</a> &middot;
-          <a href="${thumbUrl}" target="_blank">Open thumbnail</a>
-        </div>
-      `;
-      list.prepend(row);
-
-      row.querySelectorAll('button[data-copy]').forEach(btn => {
-        btn.addEventListener('click', () => copy(btn.getAttribute('data-copy'), btn));
-      });
-    });
-
-    ctx.addEventListener('upload-complete', (ev) => {
-      const { failed } = ev.detail || {};
-      statusEl.innerHTML = failed?.length
-        ? `<span class="err">Some files failed.</span>`
-        : `<span class="ok">All files uploaded successfully.</span>`;
+      const qs = new URLSearchParams({ fileUrl, name });
+      window.location.href = `./results.html?${qs.toString()}`;
     });
 
     ctx.addEventListener('file-upload-error', (ev) => {
-      results.hidden = false;
-      statusEl.innerHTML = `<span class="err">Error:</span> ${ev.detail?.message || 'Upload failed'}`;
+      alert('Upload failed: ' + (ev.detail?.message || 'unknown error'));
     });
   </script>
 </body>
