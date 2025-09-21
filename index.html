@@ -2,31 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Upload JSON for ChatGPT Hours</title>
+  <title>Upload JSON for ChatGPT Time</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <!-- Uploadcare Regular Uploader styles -->
-  <link
-    rel="stylesheet"
-    href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.css"
-  />
-
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.css" />
   <link rel="stylesheet" href="./assets/app.css" />
 </head>
 <body>
   <header class="container">
     <h1>Upload your ChatGPT JSON</h1>
-    <p class="muted">We’ll analyze it on the next page and show total hours used.</p>
+    <p class="muted">We’ll analyze it on the next page and show total time used.</p>
   </header>
 
   <main class="container card">
-    <!-- 1) Define components -->
     <script type="module">
       import * as UC from 'https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.js';
       UC.defineComponents(UC);
     </script>
 
-    <!-- 2) Global config -->
     <uc-config
       ctx-name="my-uploader"
       pubkey="b00c50b261574b46682e"
@@ -36,44 +28,28 @@
       max-local-file-size-bytes="0"
     ></uc-config>
 
-    <!-- 3) Uploader -->
-    <uc-file-uploader-regular
-      ctx-name="my-uploader"
-      class="uc-light"
-    ></uc-file-uploader-regular>
-
-    <!-- 4) Context provider -->
+    <uc-file-uploader-regular ctx-name="my-uploader" class="uc-light"></uc-file-uploader-regular>
     <uc-upload-ctx-provider ctx-name="my-uploader"></uc-upload-ctx-provider>
 
-    <p class="hint">Tip: upload the exported conversations JSON from ChatGPT.</p>
+    <p class="hint">Tip: upload the conversations JSON from your ChatGPT export.</p>
   </main>
 
   <footer class="container footnote">
-    Your file uploads to Uploadcare. We only pass its URL to the analyzer.
+    Files upload to Uploadcare; we only pass their URL to the analyzer.
   </footer>
 
   <script>
-    // After a successful upload, redirect to results.html with the file URL & name
     const ctx = document.querySelector('uc-upload-ctx-provider[ctx-name="my-uploader"]');
-
-    function toOriginalUrl(uuid) {
-      return `https://ucarecdn.com/${uuid}/`; // raw/original — best for AI/analysis
-    }
 
     ctx.addEventListener('file-upload-success', (ev) => {
       const info = ev.detail;
-      const fileUrl = toOriginalUrl(info.uuid);
+      // Use Uploadcare’s canonical URL
+      const fileUrl = info.cdnUrl || `https://ucarecdn.com/${info.uuid}/`;
       const name = info.name || 'uploaded.json';
-
-      // Ensure it's JSON
       const isJson = (info?.mimeType || '').includes('json') || name.toLowerCase().endsWith('.json');
-      if (!isJson) {
-        alert('Please upload a JSON file (your ChatGPT export).');
-        return;
-      }
-
+      if (!isJson) { alert('Please upload a JSON file'); return; }
       const qs = new URLSearchParams({ fileUrl, name });
-      window.location.href = `./results.html?${qs.toString()}`;
+      location.href = `./results.html?${qs.toString()}`;
     });
 
     ctx.addEventListener('file-upload-error', (ev) => {
