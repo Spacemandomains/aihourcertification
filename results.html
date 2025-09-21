@@ -14,126 +14,165 @@
 
   <main class="container">
     <section class="card">
-      <div id="status" class="status">Requesting analysis…</div>
+      <div id="status" class="status">Downloading JSON…</div>
 
       <div id="results" class="grid two" hidden>
         <div class="stat">
           <div class="label">Total Hours</div>
-          <div class="value" id="hoursAI">—</div>
+          <div class="value" id="hours">—</div>
         </div>
         <div class="stat">
           <div class="label">Sessions</div>
-          <div class="value" id="sessionsAI">—</div>
+          <div class="value" id="sessions">—</div>
         </div>
       </div>
 
       <div id="timeframe" class="meta" hidden>
         <div><strong>First activity:</strong> <span id="firstTs">—</span></div>
         <div><strong>Last activity:</strong> <span id="lastTs">—</span></div>
+        <div class="muted">Gap rule: <span id="gapRule">30</span> minutes</div>
       </div>
 
+      <!-- Error preview if parsing fails -->
       <div id="errorBox" class="card subtle" hidden>
         <div class="label">Error details</div>
         <pre id="errorJson"></pre>
       </div>
 
       <div id="raw" class="code card subtle" hidden>
-        <div class="label">Raw Response</div>
+        <div class="label">Debug output</div>
         <pre id="rawJson"></pre>
       </div>
 
       <div class="actions">
         <a class="btn" href="./index.html">Upload another file</a>
-        <button class="btn ghost" id="toggleRaw">Show raw</button>
+        <button class="btn ghost" id="toggleRaw">Show debug</button>
         <button class="btn" id="downloadReport" hidden>Download Report</button>
       </div>
     </section>
   </main>
 
   <footer class="container footnote">
-    Computed with a 30-minute session gap rule.
+    Computed locally in your browser (no server). Uses a 30-minute session gap.
   </footer>
 
   <script>
-    const ANALYZE = '/api/analyze';
+    // ====== Config ======
+    const DEFAULT_GAP_MINUTES = 30;
+
+    // ====== UI helpers ======
     const qs = new URLSearchParams(location.search);
     const fileUrl = qs.get('fileUrl');
     const name = qs.get('name') || 'uploaded.json';
-
     const $ = (id) => document.getElementById(id);
+
     $('fileMeta').textContent = `File: ${name}`;
+    $('gapRule').textContent = String(DEFAULT_GAP_MINUTES);
+
     $('toggleRaw').addEventListener('click', () => {
       const raw = $('raw');
       raw.hidden = !raw.hidden;
-      $('toggleRaw').textContent = raw.hidden ? 'Show raw' : 'Hide raw';
+      $('toggleRaw').textContent = raw.hidden ? 'Show debug' : 'Hide debug';
     });
 
     let reportData = null;
 
+    // ====== Core logic ======
     (async () => {
       const statusEl = $('status');
-      if (!fileUrl) { statusEl.textContent = 'Missing fileUrl.'; return; }
+      if (!fileUrl) {
+        statusEl.textContent = 'Missing fileUrl in query string.';
+        return;
+      }
 
       try {
-        statusEl.textContent = 'Analyzing…';
-        const res = await fetch(ANALYZE, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl, filename: name })
-        });
-        const data = await res.json();
-        $('rawJson').textContent = JSON.stringify(data, null, 2);
-
-        if (!res.ok || data.error) {
-          statusEl.textContent = 'Error: ' + (data.error || 'Analysis failed');
+        statusEl.textContent = 'Downloading JSON from Uploadcare…';
+        const res = await fetch(fileUrl, { mode: 'cors' });
+        if (!res.ok) {
+          const txt = await res.text().catch(() => '');
           $('errorBox').hidden = false;
-          $('errorJson').textContent = JSON.stringify({
-            error: data.error,
-            preview: data.preview,
-            length: data.length
-          }, null, 2);
-          $('raw').hidden = false;
+          $('errorJson').textContent = JSON.stringify({ httpStatus: res.status, preview: txt.slice(0,200) }, null, 2);
+          statusEl.textContent = `Download failed (${res.status}).`;
+          return;
+        }
+        const text = await res.text();
+        $('rawJson').textContent = `Downloaded length: ${text.length}`;
+
+        // Parse JSON or NDJSON safely
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          try {
+            data = text.trim().split(/\r?\n/).map(line => JSON.parse(line));
+          } catch {
+            $('errorBox').hidden = false;
+            $('errorJson').textContent = JSON.stringify({
+              error: 'File is not valid JSON or NDJSON',
+              preview: text.slice(0,200),
+              length: text.length
+            }, null, 2);
+            statusEl.textContent = 'Parsing failed.';
+            $('raw').hidden = false;
+            return;
+          }
+        }
+
+        statusEl.textContent = 'Extracting timestamps…';
+        const stamps = extractTimestamps(data);
+        if (!stamps.length) {
+          statusEl.textContent = 'No timestamps found in file.';
+          $('errorBox').hidden = false;
+          $('errorJson').textContent = JSON.stringify({ note: 'No timestamps found. Check your export file.' }, null, 2);
           return;
         }
 
-        const ai = data.openai && !data.openai.error ? data.openai : null;
-        if (!ai) {
-          statusEl.textContent = 'Response missing.';
-          $('raw').hidden = false;
-          return;
-        }
+        statusEl.textContent = 'Calculating sessions…';
+        const result = calcSessions(stamps, DEFAULT_GAP_MINUTES);
 
-        $('hoursAI').textContent    = ai?.total_hours != null ? Number(ai.total_hours).toFixed(2) : '—';
-        $('sessionsAI').textContent = ai?.sessions ?? '—';
-        if (ai.first || ai.last) {
-          $('firstTs').textContent = ai.first ? new Date(ai.first).toLocaleString() : '—';
-          $('lastTs').textContent  = ai.last  ? new Date(ai.last).toLocaleString()  : '—';
-          $('timeframe').hidden = false;
-        }
+        // Show results
+        $('hours').textContent = result.totalHours.toFixed(2);
+        $('sessions').textContent = String(result.sessions);
+        $('firstTs').textContent = result.first ? new Date(result.first).toLocaleString() : '—';
+        $('lastTs').textContent  = result.last  ? new Date(result.last ).toLocaleString() : '—';
 
-        statusEl.textContent = 'Done.';
         $('results').hidden = false;
+        $('timeframe').hidden = false;
+        statusEl.textContent = 'Done.';
 
-        // Store for report
+        // Prepare report
         reportData = {
           file: name,
-          totalHours: ai.total_hours,
-          sessions: ai.sessions,
-          first: ai.first,
-          last: ai.last
+          totalHours: result.totalHours.toFixed(2),
+          sessions: result.sessions,
+          first: result.first ? new Date(result.first).toISOString() : null,
+          last:  result.last  ? new Date(result.last ).toISOString() : null,
+          gapMinutes: DEFAULT_GAP_MINUTES,
+          events: result.events
         };
         $('downloadReport').hidden = false;
+
       } catch (e) {
         $('status').textContent = 'Error: ' + e.message;
         $('raw').hidden = false;
       }
     })();
 
-    // Download report as .txt
+    // Download a plain-text report
     document.getElementById('downloadReport').addEventListener('click', () => {
       if (!reportData) return;
-      const text = `ChatGPT Usage Report\n\nFile: ${reportData.file}\nTotal Hours: ${reportData.totalHours}\nSessions: ${reportData.sessions}\nFirst: ${reportData.first}\nLast: ${reportData.last}`;
-      const blob = new Blob([text], { type: 'text/plain' });
+      const t = `ChatGPT Usage Report
+
+File: ${reportData.file}
+Total Hours: ${reportData.totalHours}
+Sessions: ${reportData.sessions}
+First: ${reportData.first ?? '—'}
+Last: ${reportData.last ?? '—'}
+Events parsed: ${reportData.events}
+Gap minutes: ${reportData.gapMinutes}
+Generated: ${new Date().toISOString()}
+`;
+      const blob = new Blob([t], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -141,6 +180,82 @@
       a.click();
       URL.revokeObjectURL(url);
     });
+
+    // ====== Timestamp extraction & session math ======
+    const TIMESTAMP_KEYS = new Set([
+      'create_time','created','created_at','timestamp','ts',
+      'time','date','update_time','modified_at','last_activity_time'
+    ]);
+
+    function extractTimestamps(any) {
+      const out = new Set();
+
+      function toDate(v){
+        if (v == null) return null;
+        if (typeof v === 'number') {
+          if (v > 1e12) return new Date(v);        // ms
+          if (v > 1e9)  return new Date(v*1000);   // s
+          return null;
+        }
+        if (typeof v === 'string') {
+          if (/^\d{10,13}(\.\d+)?$/.test(v)) {
+            const n = Number(v);
+            if (n > 1e12) return new Date(n);
+            if (n > 1e9)  return new Date(n*1000);
+          }
+          const d = new Date(v);
+          return isNaN(d) ? null : d;
+        }
+        return null;
+      }
+
+      (function visit(n){
+        if (!n) return;
+        if (Array.isArray(n)) return n.forEach(visit);
+        if (typeof n === 'object') {
+          for (const [k, v] of Object.entries(n)) {
+            const lk = k.toLowerCase();
+            if (TIMESTAMP_KEYS.has(lk)) {
+              const d = toDate(v);
+              if (d) out.add(d.toISOString());
+            }
+            if (v && typeof v === 'object') visit(v);
+          }
+        }
+      })(any);
+
+      return Array.from(out).map(s => new Date(s)).sort((a,b)=>a-b);
+    }
+
+    function calcSessions(timestamps, gapMinutes = 30) {
+      const gapMs = gapMinutes * 60 * 1000;
+      if (!timestamps.length) return { totalHours: 0, sessions: 0, events: 0, first: null, last: null };
+
+      let sessions = 0, totalMs = 0;
+      let first = timestamps[0], last = timestamps[0];
+      let start = timestamps[0], prev = timestamps[0];
+
+      for (let i = 1; i < timestamps.length; i++) {
+        const t = timestamps[i];
+        if (t - prev >= gapMs) {
+          sessions++;
+          totalMs += Math.max(prev - start, 60 * 1000); // min 1 minute
+          start = t;
+        }
+        prev = t;
+        last = t;
+      }
+      sessions++;
+      totalMs += Math.max(last - start, 60 * 1000);
+
+      return {
+        totalHours: totalMs / 3_600_000,
+        sessions,
+        events: timestamps.length,
+        first,
+        last
+      };
+    }
   </script>
 </body>
 </html>
