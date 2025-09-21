@@ -33,7 +33,7 @@
         <div class="muted">Gap rule: <span id="gapRule">30</span> minutes</div>
       </div>
 
-      <!-- Error preview if parsing fails -->
+      <!-- Error preview if parsing or network fails -->
       <div id="errorBox" class="card subtle" hidden>
         <div class="label">Error details</div>
         <pre id="errorJson"></pre>
@@ -48,12 +48,16 @@
         <a class="btn" href="./index.html">Upload another file</a>
         <button class="btn ghost" id="toggleRaw">Show debug</button>
         <button class="btn" id="downloadReport" hidden>Download Report</button>
+        <!-- Fallback controls -->
+        <input type="file" id="fileInput" accept=".json,application/json" hidden />
+        <button class="btn" id="chooseLocal" hidden>Choose JSON file instead</button>
+        <a class="btn ghost" id="openUrl" href="#" target="_blank" hidden>Open file URL</a>
       </div>
     </section>
   </main>
 
   <footer class="container footnote">
-    Computed locally in your browser (no server). Uses a 30-minute session gap.
+    Computed locally in your browser. Uses a 30-minute session gap.
   </footer>
 
   <script>
@@ -75,90 +79,144 @@
       $('toggleRaw').textContent = raw.hidden ? 'Show debug' : 'Hide debug';
     });
 
+    // Fallback controls
+    const fileInput = $('fileInput');
+    const chooseLocalBtn = $('chooseLocal');
+    const openUrlBtn = $('openUrl');
+
+    chooseLocalBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      if (fileInput.files && fileInput.files[0]) {
+        $('status').textContent = 'Reading local file…';
+        const text = await fileInput.files[0].text();
+        processText(text, `(local) ${fileInput.files[0].name}`);
+      }
+    });
+
+    if (fileUrl) {
+      openUrlBtn.href = fileUrl;
+      openUrlBtn.hidden = false; // quick way to try in a new tab if fetch fails
+    }
+
     let reportData = null;
 
-    // ====== Core logic ======
+    // ====== Core: try remote fetch first ======
     (async () => {
       const statusEl = $('status');
       if (!fileUrl) {
         statusEl.textContent = 'Missing fileUrl in query string.';
+        showFallback();
         return;
       }
 
       try {
         statusEl.textContent = 'Downloading JSON from Uploadcare…';
-        const res = await fetch(fileUrl, { mode: 'cors' });
+        const res = await fetch(withInlineHint(fileUrl), {
+          mode: 'cors',
+          credentials: 'omit',
+          cache: 'no-store'
+        });
+
         if (!res.ok) {
-          const txt = await res.text().catch(() => '');
-          $('errorBox').hidden = false;
-          $('errorJson').textContent = JSON.stringify({ httpStatus: res.status, preview: txt.slice(0,200) }, null, 2);
-          statusEl.textContent = `Download failed (${res.status}).`;
+          const txt = await safeText(res);
+          onFetchFail(res.status, txt);
           return;
         }
+
         const text = await res.text();
         $('rawJson').textContent = `Downloaded length: ${text.length}`;
-
-        // Parse JSON or NDJSON safely
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          try {
-            data = text.trim().split(/\r?\n/).map(line => JSON.parse(line));
-          } catch {
-            $('errorBox').hidden = false;
-            $('errorJson').textContent = JSON.stringify({
-              error: 'File is not valid JSON or NDJSON',
-              preview: text.slice(0,200),
-              length: text.length
-            }, null, 2);
-            statusEl.textContent = 'Parsing failed.';
-            $('raw').hidden = false;
-            return;
-          }
-        }
-
-        statusEl.textContent = 'Extracting timestamps…';
-        const stamps = extractTimestamps(data);
-        if (!stamps.length) {
-          statusEl.textContent = 'No timestamps found in file.';
-          $('errorBox').hidden = false;
-          $('errorJson').textContent = JSON.stringify({ note: 'No timestamps found. Check your export file.' }, null, 2);
-          return;
-        }
-
-        statusEl.textContent = 'Calculating sessions…';
-        const result = calcSessions(stamps, DEFAULT_GAP_MINUTES);
-
-        // Show results
-        $('hours').textContent = result.totalHours.toFixed(2);
-        $('sessions').textContent = String(result.sessions);
-        $('firstTs').textContent = result.first ? new Date(result.first).toLocaleString() : '—';
-        $('lastTs').textContent  = result.last  ? new Date(result.last ).toLocaleString() : '—';
-
-        $('results').hidden = false;
-        $('timeframe').hidden = false;
-        statusEl.textContent = 'Done.';
-
-        // Prepare report
-        reportData = {
-          file: name,
-          totalHours: result.totalHours.toFixed(2),
-          sessions: result.sessions,
-          first: result.first ? new Date(result.first).toISOString() : null,
-          last:  result.last  ? new Date(result.last ).toISOString() : null,
-          gapMinutes: DEFAULT_GAP_MINUTES,
-          events: result.events
-        };
-        $('downloadReport').hidden = false;
+        processText(text, name);
 
       } catch (e) {
-        $('status').textContent = 'Error: ' + e.message;
-        $('raw').hidden = false;
+        onFetchFail('network', String(e && e.message || e));
       }
     })();
 
-    // Download a plain-text report
+    // Try adding inline hint (helps in some CDN configs)
+    function withInlineHint(url) {
+      try {
+        const u = new URL(url);
+        // Ensure trailing slash for op paths, then try "-/inline/yes/"
+        if (!u.pathname.endsWith('/')) u.pathname += '/';
+        return `${u.origin}${u.pathname}-/inline/yes/${u.search}`;
+      } catch { return url; }
+    }
+
+    async function safeText(res) {
+      try { return await res.text(); } catch { return ''; }
+    }
+
+    function onFetchFail(status, preview) {
+      $('errorBox').hidden = false;
+      $('errorJson').textContent = JSON.stringify({
+        error: 'Failed to fetch',
+        status,
+        preview: typeof preview === 'string' ? preview.slice(0, 200) : String(preview)
+      }, null, 2);
+      $('status').textContent = 'Download failed. You can choose the JSON locally instead.';
+      showFallback();
+    }
+
+    function showFallback() {
+      $('chooseLocal').hidden = false;
+      $('openUrl').hidden = !fileUrl;
+    }
+
+    // ====== Process text (JSON/NDJSON) and render ======
+    function processText(text, displayName) {
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        try {
+          data = text.trim().split(/\r?\n/).map(line => JSON.parse(line));
+        } catch {
+          $('errorBox').hidden = false;
+          $('errorJson').textContent = JSON.stringify({
+            error: 'Not valid JSON or NDJSON',
+            preview: text.slice(0,200),
+            length: text.length
+          }, null, 2);
+          $('status').textContent = 'Parsing failed.';
+          $('raw').hidden = false;
+          return;
+        }
+      }
+
+      $('status').textContent = 'Extracting timestamps…';
+      const stamps = extractTimestamps(data);
+      if (!stamps.length) {
+        $('status').textContent = 'No timestamps found in file.';
+        $('errorBox').hidden = false;
+        $('errorJson').textContent = JSON.stringify({ note: 'No timestamps found. Check your export file.' }, null, 2);
+        return;
+      }
+
+      $('status').textContent = 'Calculating sessions…';
+      const result = calcSessions(stamps, DEFAULT_GAP_MINUTES);
+
+      $('hours').textContent = result.totalHours.toFixed(2);
+      $('sessions').textContent = String(result.sessions);
+      $('firstTs').textContent = result.first ? new Date(result.first).toLocaleString() : '—';
+      $('lastTs').textContent  = result.last  ? new Date(result.last ).toLocaleString() : '—';
+
+      $('results').hidden = false;
+      $('timeframe').hidden = false;
+      $('status').textContent = 'Done.';
+
+      reportData = {
+        file: displayName,
+        totalHours: result.totalHours.toFixed(2),
+        sessions: result.sessions,
+        first: result.first ? new Date(result.first).toISOString() : null,
+        last:  result.last  ? new Date(result.last ).toISOString() : null,
+        gapMinutes: DEFAULT_GAP_MINUTES,
+        events: result.events
+      };
+      $('downloadReport').hidden = false;
+    }
+
+    // ====== Download a plain-text report ======
     document.getElementById('downloadReport').addEventListener('click', () => {
       if (!reportData) return;
       const t = `ChatGPT Usage Report
