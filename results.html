@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Your ChatGPT Time (OpenAI)</title>
+  <title>ChatGPT Time — OpenAI Total</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./assets/app.css" />
 </head>
@@ -49,10 +49,8 @@
   </footer>
 
   <script>
-    // Netlify function on same origin:
     const ANALYZE = '/api/analyze';
-
-    const qs = new URLSearchParams(window.location.search);
+    const qs = new URLSearchParams(location.search);
     const fileUrl = qs.get('fileUrl');
     const name = qs.get('name') || 'uploaded.json';
 
@@ -64,27 +62,19 @@
       $('toggleRaw').textContent = raw.hidden ? 'Show raw' : 'Hide raw';
     });
 
-    (async function run() {
+    (async () => {
       const statusEl = $('status');
-      const resultsEl = $('results');
-      const rawJson = $('rawJson');
-
-      if (!fileUrl) {
-        statusEl.textContent = 'Missing fileUrl in query string.';
-        return;
-      }
+      if (!fileUrl) { statusEl.textContent = 'Missing fileUrl in query string.'; return; }
 
       try {
         statusEl.textContent = 'Analyzing with OpenAI…';
-
         const res = await fetch(ANALYZE, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl, filename: name, useOpenAI: true })
+          body: JSON.stringify({ fileUrl, useOpenAI: true, filename: name })
         });
-
         const data = await res.json();
-        rawJson.textContent = JSON.stringify(data, null, 2);
+        $('rawJson').textContent = JSON.stringify(data, null, 2);
 
         if (!res.ok) {
           statusEl.textContent = 'Error: ' + (data.error || 'OpenAI analysis failed');
@@ -94,7 +84,7 @@
 
         const ai = data.openai && !data.openai.error ? data.openai : null;
         if (!ai) {
-          statusEl.textContent = 'OpenAI response missing. Make sure OPENAI_API_KEY is set in Netlify.';
+          statusEl.textContent = 'OpenAI response missing. Check OPENAI_API_KEY.';
           $('raw').hidden = false;
           return;
         }
@@ -108,10 +98,10 @@
           $('timeframe').hidden = false;
         }
 
-        statusEl.textContent = 'Done.';
-        resultsEl.hidden = false;
-      } catch (err) {
-        $('status').textContent = 'Error: ' + err.message;
+        $('status').textContent = 'Done.';
+        $('results').hidden = false;
+      } catch (e) {
+        $('status').textContent = 'Error: ' + e.message;
         $('raw').hidden = false;
       }
     })();
