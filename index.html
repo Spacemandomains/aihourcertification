@@ -2,59 +2,87 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Upload JSON for ChatGPT Time</title>
+  <title>Upload ChatGPT JSON</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.css" />
+
+  <!-- Uploadcare Regular Uploader styles -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.css"
+  />
+
   <link rel="stylesheet" href="./assets/app.css" />
+
+  <script type="module">
+    import * as UC from 'https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.js';
+    UC.defineComponents(UC);
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const ctxProvider = document.querySelector('uc-upload-ctx-provider[ctx-name="my-uploader"]');
+      const urlList = document.getElementById('urlList');
+      const status = document.getElementById('status');
+
+      function pickJson(entries) {
+        return entries.find(e => {
+          const name = (e.name || '').toLowerCase();
+          const mime = (e.mimeType || '').toLowerCase();
+          return mime.includes('json') || name.endsWith('.json');
+        });
+      }
+
+      ctxProvider.addEventListener('common-upload-success', (e) => {
+        const entries = e.detail?.successEntries || [];
+        if (!entries.length) return;
+
+        const urls = entries.map(entry => entry.cdnUrl);
+        console.log('Uploaded files URL list:', urls);
+
+        urlList.innerHTML = urls
+          .map((u, i) => `<div><strong>File ${i+1}:</strong><br><code>${u}</code></div>`)
+          .join('');
+
+        const jsonEntry = pickJson(entries);
+        if (jsonEntry && jsonEntry.cdnUrl) {
+          status.textContent = 'JSON detected. Sending to analyzer…';
+          const qs = new URLSearchParams({
+            fileUrl: jsonEntry.cdnUrl,
+            name: jsonEntry.name || 'uploaded.json'
+          });
+          window.location.href = `./results.html?${qs.toString()}`;
+        } else {
+          status.textContent = 'Upload complete. No JSON detected.';
+        }
+      });
+
+      ctxProvider.addEventListener('common-upload-error', (e) => {
+        console.error('Upload error:', e.detail);
+        status.textContent = 'Upload error — see console.';
+      });
+    });
+  </script>
 </head>
 <body>
-  <header class="container">
-    <h1>Upload your ChatGPT JSON</h1>
-    <p class="muted">We’ll analyze it on the next page and show total time used.</p>
-  </header>
+  <h1>Upload your ChatGPT JSON</h1>
+  <p class="muted">After upload, if a JSON file is found, you’ll be redirected to the results page.</p>
 
-  <main class="container card">
-    <script type="module">
-      import * as UC from 'https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1/web/uc-file-uploader-regular.min.js';
-      UC.defineComponents(UC);
-    </script>
-
+  <div class="card">
     <uc-config
       ctx-name="my-uploader"
       pubkey="b00c50b261574b46682e"
-      source-list="local"
+      source-list="local, camera, facebook, gdrive"
       confirm-upload="true"
-      multiple="false"
-      max-local-file-size-bytes="0"
+      multiple="true"
     ></uc-config>
 
-    <uc-file-uploader-regular ctx-name="my-uploader" class="uc-light"></uc-file-uploader-regular>
+    <uc-file-uploader-regular
+      ctx-name="my-uploader"
+      class="uc-light"
+    ></uc-file-uploader-regular>
+
     <uc-upload-ctx-provider ctx-name="my-uploader"></uc-upload-ctx-provider>
 
-    <p class="hint">Tip: upload the conversations JSON from your ChatGPT export.</p>
-  </main>
-
-  <footer class="container footnote">
-    Files upload to Uploadcare; we only pass their URL to the analyzer.
-  </footer>
-
-  <script>
-    const ctx = document.querySelector('uc-upload-ctx-provider[ctx-name="my-uploader"]');
-
-    ctx.addEventListener('file-upload-success', (ev) => {
-      const info = ev.detail;
-      // Use Uploadcare’s canonical URL
-      const fileUrl = info.cdnUrl || `https://ucarecdn.com/${info.uuid}/`;
-      const name = info.name || 'uploaded.json';
-      const isJson = (info?.mimeType || '').includes('json') || name.toLowerCase().endsWith('.json');
-      if (!isJson) { alert('Please upload a JSON file'); return; }
-      const qs = new URLSearchParams({ fileUrl, name });
-      location.href = `./results.html?${qs.toString()}`;
-    });
-
-    ctx.addEventListener('file-upload-error', (ev) => {
-      alert('Upload failed: ' + (ev.detail?.message || 'unknown error'));
-    });
-  </script>
+    <div class="urls" id="urlList"></div>
+    <div class="note" id="status"></div>
+  </div>
 </body>
 </html>
