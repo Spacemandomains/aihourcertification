@@ -1,10 +1,6 @@
-// Netlify Function: POST /api/analyze
-// Body: { fileUrl: string, filename?: string }
-// Downloads the JSON from Uploadcare (public CDN) and asks OpenAI to compute total hours.
-
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
 
@@ -16,29 +12,26 @@ exports.handler = async (event) => {
     const { fileUrl, filename } = JSON.parse(event.body || '{}');
     if (!fileUrl) return json({ error: 'fileUrl is required' }, 400);
 
-    const OPENAI = process.env.OPENAI_API_KEY;
-    if (!OPENAI) return json({ error: 'OPENAI_API_KEY missing in Netlify env vars' }, 400);
-
-    // Fetch JSON from Uploadcare original URL
     const fileRes = await fetch(fileUrl);
     if (!fileRes.ok) return json({ error: `Failed to fetch file: ${fileRes.status}` }, 400);
+
     const text = await fileRes.text();
 
-    // Parse JSON or NDJSON
     let data;
-    try { data = JSON.parse(text); }
-    catch {
-      try { data = text.trim().split(/\r?\n/).map(l => JSON.parse(l)); }
-      catch { return json({ error: 'File is not valid JSON or NDJSON' }, 400); }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      try {
+        data = text.trim().split(/\r?\n/).map(line => JSON.parse(line));
+      } catch {
+        return json({ error: 'File is not valid JSON', preview: text.slice(0,200), length: text.length }, 400);
+      }
     }
 
-    // Compact timestamps for the model
-    const compact = sampleTimestampsForLLM(data, 1000);
+    const stamps = extractTimestamps(data);
+    const result = calcSessions(stamps, 30); // 30-minute gap
 
-    // Ask OpenAI
-    const openai = await askOpenAIForHours(OPENAI, compact);
-
-    return json({ openai, filename, source: fileUrl });
+    return json({ openai: result, filename, source: fileUrl });
   } catch (err) {
     return json({ error: String(err) }, 500);
   }
@@ -52,57 +45,73 @@ function json(obj, status = 200) {
   };
 }
 
-// ---- helpers ----
+const TIMESTAMP_KEYS = new Set([
+  'create_time','created','created_at','timestamp','ts',
+  'time','date','update_time','modified_at','last_activity_time'
+]);
+
 function extractTimestamps(any) {
   const out = new Set();
-  const KEYS = new Set(['created','created_at','timestamp','ts','time','date','create_time']);
-  (function visit(n) {
+  function toDate(v){
+    if (typeof v === 'number') {
+      if (v > 1e12) return new Date(v);
+      if (v > 1e9) return new Date(v*1000);
+    }
+    if (typeof v === 'string') {
+      if (/^\d{10,13}(\.\d+)?$/.test(v)) {
+        const n = Number(v);
+        if (n > 1e12) return new Date(n);
+        if (n > 1e9) return new Date(n*1000);
+      }
+      const d = new Date(v);
+      if (!isNaN(d)) return d;
+    }
+    return null;
+  }
+  function visit(n){
     if (!n) return;
     if (Array.isArray(n)) return n.forEach(visit);
     if (typeof n === 'object') {
-      for (const [k,v] of Object.entries(n)) {
-        if (v == null) continue;
-        const lk = k.toLowerCase();
-        if (KEYS.has(lk)) {
+      for (const [k,v] of Object.entries(n)){
+        if (TIMESTAMP_KEYS.has(k.toLowerCase())) {
           const d = toDate(v);
           if (d) out.add(d.toISOString());
         }
         if (typeof v === 'object') visit(v);
       }
     }
-  })(any);
-  return Array.from(out).map(s => new Date(s)).sort((a,b)=>a-b);
+  }
+  visit(any);
+  return Array.from(out).map(s=>new Date(s)).sort((a,b)=>a-b);
 }
-function toDate(v){
-  if (typeof v === 'string') { const d = new Date(v); if (!isNaN(d)) return d; if (/^\d{10,13}$/.test(v)) return fromUnix(+v); }
-  if (typeof v === 'number') return fromUnix(v);
-  return null;
-}
-function fromUnix(n){ if (n>1e12) return new Date(n); if (n>1e9) return new Date(n*1000); return null; }
-function sampleTimestampsForLLM(data, max=1000){ const stamps = extractTimestamps(data).map(d=>d.toISOString()); return { timestamps: stamps.slice(0,max), gap_minutes: 30 }; }
 
-async function askOpenAIForHours(apiKey, compact) {
-  const prompt = `You are given JSON with an array "timestamps" (ISO 8601 strings) sorted earliest->latest and a "gap_minutes" threshold.
-A "session" ends when the gap between consecutive timestamps is >= gap_minutes.
-Total time = sum over sessions of (last - first). If a session would be zero minutes, count it as 1 minute.
-Return STRICT JSON: {"total_hours": number, "sessions": number, "first": isoOrNull, "last": isoOrNull }.`;
+function calcSessions(timestamps, gapMinutes=30){
+  const gapMs = gapMinutes*60*1000;
+  if (!timestamps.length) return { total_hours:0, sessions:0, first:null, last:null };
 
-  const body = {
-    model: "gpt-4o-mini",
-    temperature: 0,
-    messages: [
-      { role: "system", content: prompt },
-      { role: "user", content: JSON.stringify(compact) }
-    ]
+  let sessions=0, totalMs=0;
+  let sessionStart = timestamps[0];
+  let prev = timestamps[0];
+  let first = timestamps[0];
+  let last = timestamps[0];
+
+  for (let i=1; i<timestamps.length; i++){
+    const t = timestamps[i];
+    if (t - prev >= gapMs){
+      sessions++;
+      totalMs += Math.max(prev - sessionStart, 60*1000);
+      sessionStart = t;
+    }
+    prev = t;
+    last = t;
+  }
+  sessions++;
+  totalMs += Math.max(last - sessionStart, 60*1000);
+
+  return {
+    total_hours: totalMs / 3_600_000,
+    sessions,
+    first,
+    last
   };
-
-  const r = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!r.ok) { const t = await r.text(); throw new Error(`OpenAI error ${r.status}: ${t}`); }
-  const j = await r.json();
-  const text = j.choices?.[0]?.message?.content?.trim() || "{}";
-  try { return JSON.parse(text); } catch { return { raw: text }; }
 }
