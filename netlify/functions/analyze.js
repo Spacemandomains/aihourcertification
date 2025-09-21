@@ -1,8 +1,9 @@
 // Netlify Function: POST /api/analyze
 // Body: { fileUrl: string, filename?: string, useOpenAI?: boolean }
 //
-// Downloads the JSON from Uploadcare (raw/original URL), computes hours locally,
-// and optionally asks OpenAI for a second opinion.
+// Downloads the JSON from Uploadcare (raw/original URL),
+// extracts timestamps, and asks OpenAI to compute total hours.
+// Returns ONLY the OpenAI result.
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -14,23 +15,24 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
   }
-
   if (event.httpMethod !== 'POST') {
     return json({ error: 'Method not allowed' }, 405);
   }
 
   try {
-    const { fileUrl, filename, useOpenAI = true } = JSON.parse(event.body || '{}');
+    const { fileUrl, filename } = JSON.parse(event.body || '{}');
     if (!fileUrl) return json({ error: 'fileUrl is required' }, 400);
+
+    if (!process.env.OPENAI_API_KEY) {
+      return json({ error: 'OPENAI_API_KEY missing in Netlify env vars' }, 400);
+    }
 
     // 1) Fetch JSON from Uploadcare original URL
     const fileRes = await fetch(fileUrl);
-    if (!fileRes.ok) {
-      return json({ error: `Failed to fetch file: ${fileRes.status}` }, 400);
-    }
+    if (!fileRes.ok) return json({ error: `Failed to fetch file: ${fileRes.status}` }, 400);
     const text = await fileRes.text();
 
-    // 2) Parse JSON or NDJSON
+    // 2) Parse JSON or NDJSON to JS object/array
     let data;
     try {
       data = JSON.parse(text);
@@ -39,21 +41,13 @@ exports.handler = async (event) => {
       catch { return json({ error: 'File is not valid JSON or NDJSON' }, 400); }
     }
 
-    // 3) Local calculation
-    const local = calcHoursFromJson(data);
+    // 3) Extract timestamps & compact for LLM
+    const compact = sampleTimestampsForLLM(data, 1000); // up to 1000 stamps
 
-    // 4) Optional OpenAI
-    let openai = null;
-    if (useOpenAI && process.env.OPENAI_API_KEY) {
-      try {
-        const compact = sampleTimestampsForLLM(data, 500);
-        openai = await askOpenAIForHours(process.env.OPENAI_API_KEY, compact);
-      } catch (e) {
-        openai = { error: String(e) };
-      }
-    }
+    // 4) Ask OpenAI to compute total hours, sessions, first/last
+    const openai = await askOpenAIForHours(process.env.OPENAI_API_KEY, compact);
 
-    return json({ local, openai, filename, source: fileUrl });
+    return json({ openai, filename, source: fileUrl });
   } catch (err) {
     return json({ error: String(err) }, 500);
   }
@@ -67,11 +61,11 @@ function json(obj, status = 200) {
   };
 }
 
-// ----- Helpers -----
+/* ---------- Helpers ---------- */
 
 function extractTimestamps(any) {
   const out = new Set();
-  const KEYS = new Set(['created', 'created_at', 'timestamp', 'ts', 'time', 'date']);
+  const KEYS = new Set(['created', 'created_at', 'timestamp', 'ts', 'time', 'date', 'create_time']);
 
   function visit(node) {
     if (!node) return;
@@ -110,50 +104,17 @@ function extractTimestamps(any) {
   return Array.from(out).map(s => new Date(s)).sort((a,b)=>a-b);
 }
 
-function calcHoursFromJson(data, gapMinutes = 30) {
-  const stamps = extractTimestamps(data);
-  const gapMs = gapMinutes * 60 * 1000;
-
-  if (!stamps.length) {
-    return { totalHours: 0, sessions: 0, events: 0, firstTimestamp: null, lastTimestamp: null };
-  }
-  let sessions = 0, totalMs = 0;
-  let first = stamps[0], last = stamps[0];
-  let sesStart = stamps[0], prev = stamps[0];
-
-  for (let i = 1; i < stamps.length; i++) {
-    const t = stamps[i];
-    if (t - prev >= gapMs) {
-      sessions++;
-      totalMs += Math.max(prev - sesStart, 60 * 1000); // min 1 minute
-      sesStart = t;
-    }
-    prev = t;
-    last = t;
-  }
-  sessions++;
-  totalMs += Math.max(last - sesStart, 60 * 1000);
-
-  return {
-    totalHours: totalMs / 3_600_000,
-    sessions,
-    events: stamps.length,
-    firstTimestamp: first.toISOString(),
-    lastTimestamp: last.toISOString()
-  };
-}
-
-function sampleTimestampsForLLM(data, max = 500) {
+function sampleTimestampsForLLM(data, max = 1000) {
   const stamps = extractTimestamps(data).map(d => d.toISOString());
   return { timestamps: stamps.slice(0, max), gap_minutes: 30 };
 }
 
 async function askOpenAIForHours(apiKey, compact) {
   const prompt = `
-You are given JSON with an array "timestamps" (ISO strings) sorted earliest->latest and a "gap_minutes" threshold.
+You are given JSON with an array "timestamps" (ISO 8601 strings) sorted earliest->latest and a "gap_minutes" threshold.
 A "session" ends when the gap between consecutive timestamps is >= gap_minutes.
 Total time = sum over sessions of (last - first). If a session would be zero minutes, count it as 1 minute.
-Return JSON: {"total_hours": number, "sessions": number, "first": isoOrNull, "last": isoOrNull }.
+Return STRICT JSON: {"total_hours": number, "sessions": number, "first": isoOrNull, "last": isoOrNull }.
 `.trim();
 
   const body = {
