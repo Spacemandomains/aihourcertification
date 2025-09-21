@@ -2,35 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Your ChatGPT Hours</title>
+  <title>Your ChatGPT Time (OpenAI)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./assets/app.css" />
 </head>
 <body>
   <header class="container">
-    <h1>ChatGPT Usage Summary</h1>
+    <h1>ChatGPT Usage — OpenAI Total Time</h1>
     <p class="muted" id="fileMeta">Analyzing…</p>
   </header>
 
   <main class="container">
     <section class="card">
-      <div id="status" class="status">Requesting analysis…</div>
+      <div id="status" class="status">Requesting OpenAI analysis…</div>
 
       <div id="results" class="grid two" hidden>
         <div class="stat">
-          <div class="label">Total Hours (Local)</div>
-          <div class="value" id="hoursLocal">—</div>
-        </div>
-        <div class="stat">
-          <div class="label">Sessions (Local)</div>
-          <div class="value" id="sessionsLocal">—</div>
-        </div>
-        <div class="stat">
-          <div class="label">Total Hours (OpenAI)</div>
+          <div class="label">Total Hours</div>
           <div class="value" id="hoursAI">—</div>
         </div>
         <div class="stat">
-          <div class="label">Sessions (OpenAI)</div>
+          <div class="label">Sessions</div>
           <div class="value" id="sessionsAI">—</div>
         </div>
       </div>
@@ -41,7 +33,7 @@
       </div>
 
       <div id="raw" class="code card subtle" hidden>
-        <div class="label">Raw response</div>
+        <div class="label">Raw OpenAI response</div>
         <pre id="rawJson"></pre>
       </div>
 
@@ -53,11 +45,11 @@
   </main>
 
   <footer class="container footnote">
-    Hours use a 30-minute session gap rule.
+    Computed by OpenAI using a 30-minute session gap rule.
   </footer>
 
   <script>
-    // Netlify function lives on same origin via netlify.toml redirect
+    // Netlify function on same origin:
     const ANALYZE = '/api/analyze';
 
     const qs = new URLSearchParams(window.location.search);
@@ -83,7 +75,7 @@
       }
 
       try {
-        statusEl.textContent = 'Analyzing…';
+        statusEl.textContent = 'Analyzing with OpenAI…';
 
         const res = await fetch(ANALYZE, {
           method: 'POST',
@@ -95,28 +87,29 @@
         rawJson.textContent = JSON.stringify(data, null, 2);
 
         if (!res.ok) {
-          statusEl.textContent = 'Error: ' + (data.error || 'analysis failed');
+          statusEl.textContent = 'Error: ' + (data.error || 'OpenAI analysis failed');
           $('raw').hidden = false;
           return;
         }
 
-        const local = data.local || {};
-        $('hoursLocal').textContent    = (local.totalHours ?? 0).toFixed(2);
-        $('sessionsLocal').textContent = local.sessions ?? 0;
-
         const ai = data.openai && !data.openai.error ? data.openai : null;
-        $('hoursAI').textContent       = ai?.total_hours != null ? Number(ai.total_hours).toFixed(2) : '—';
-        $('sessionsAI').textContent    = ai?.sessions ?? '—';
+        if (!ai) {
+          statusEl.textContent = 'OpenAI response missing. Make sure OPENAI_API_KEY is set in Netlify.';
+          $('raw').hidden = false;
+          return;
+        }
 
-        if (local.firstTimestamp || local.lastTimestamp) {
-          $('firstTs').textContent = local.firstTimestamp ? new Date(local.firstTimestamp).toLocaleString() : '—';
-          $('lastTs').textContent  = local.lastTimestamp  ? new Date(local.lastTimestamp).toLocaleString()  : '—';
+        $('hoursAI').textContent    = ai?.total_hours != null ? Number(ai.total_hours).toFixed(2) : '—';
+        $('sessionsAI').textContent = ai?.sessions ?? '—';
+
+        if (ai.first || ai.last) {
+          $('firstTs').textContent = ai.first ? new Date(ai.first).toLocaleString() : '—';
+          $('lastTs').textContent  = ai.last  ? new Date(ai.last).toLocaleString()  : '—';
           $('timeframe').hidden = false;
         }
 
         statusEl.textContent = 'Done.';
         resultsEl.hidden = false;
-
       } catch (err) {
         $('status').textContent = 'Error: ' + err.message;
         $('raw').hidden = false;
