@@ -32,6 +32,12 @@
         <div><strong>Last activity:</strong> <span id="lastTs">—</span></div>
       </div>
 
+      <!-- New error preview section -->
+      <div id="errorBox" class="card subtle" hidden>
+        <div class="label">Error details</div>
+        <pre id="errorJson"></pre>
+      </div>
+
       <div id="raw" class="code card subtle" hidden>
         <div class="label">Raw OpenAI response</div>
         <pre id="rawJson"></pre>
@@ -76,8 +82,14 @@
         const data = await res.json();
         $('rawJson').textContent = JSON.stringify(data, null, 2);
 
-        if (!res.ok) {
+        if (!res.ok || data.error) {
           statusEl.textContent = 'Error: ' + (data.error || 'OpenAI analysis failed');
+          $('errorBox').hidden = false;
+          $('errorJson').textContent = JSON.stringify({
+            error: data.error,
+            preview: data.preview,
+            length: data.length
+          }, null, 2);
           $('raw').hidden = false;
           return;
         }
@@ -98,7 +110,7 @@
           $('timeframe').hidden = false;
         }
 
-        $('status').textContent = 'Done.';
+        statusEl.textContent = 'Done.';
         $('results').hidden = false;
       } catch (e) {
         $('status').textContent = 'Error: ' + e.message;
