@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>ChatGPT Time — OpenAI Total</title>
+  <title>ChatGPT Usage Results</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./assets/app.css" />
 </head>
 <body>
   <header class="container">
-    <h1>ChatGPT Usage — OpenAI Total Time</h1>
+    <h1>ChatGPT Usage Results</h1>
     <p class="muted" id="fileMeta">Analyzing…</p>
   </header>
 
   <main class="container">
     <section class="card">
-      <div id="status" class="status">Requesting OpenAI analysis…</div>
+      <div id="status" class="status">Requesting analysis…</div>
 
       <div id="results" class="grid two" hidden>
         <div class="stat">
@@ -32,26 +32,26 @@
         <div><strong>Last activity:</strong> <span id="lastTs">—</span></div>
       </div>
 
-      <!-- New error preview section -->
       <div id="errorBox" class="card subtle" hidden>
         <div class="label">Error details</div>
         <pre id="errorJson"></pre>
       </div>
 
       <div id="raw" class="code card subtle" hidden>
-        <div class="label">Raw OpenAI response</div>
+        <div class="label">Raw Response</div>
         <pre id="rawJson"></pre>
       </div>
 
       <div class="actions">
         <a class="btn" href="./index.html">Upload another file</a>
         <button class="btn ghost" id="toggleRaw">Show raw</button>
+        <button class="btn" id="downloadReport" hidden>Download Report</button>
       </div>
     </section>
   </main>
 
   <footer class="container footnote">
-    Computed by OpenAI using a 30-minute session gap rule.
+    Computed with a 30-minute session gap rule.
   </footer>
 
   <script>
@@ -68,22 +68,24 @@
       $('toggleRaw').textContent = raw.hidden ? 'Show raw' : 'Hide raw';
     });
 
+    let reportData = null;
+
     (async () => {
       const statusEl = $('status');
-      if (!fileUrl) { statusEl.textContent = 'Missing fileUrl in query string.'; return; }
+      if (!fileUrl) { statusEl.textContent = 'Missing fileUrl.'; return; }
 
       try {
-        statusEl.textContent = 'Analyzing with OpenAI…';
+        statusEl.textContent = 'Analyzing…';
         const res = await fetch(ANALYZE, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl, useOpenAI: true, filename: name })
+          body: JSON.stringify({ fileUrl, filename: name })
         });
         const data = await res.json();
         $('rawJson').textContent = JSON.stringify(data, null, 2);
 
         if (!res.ok || data.error) {
-          statusEl.textContent = 'Error: ' + (data.error || 'OpenAI analysis failed');
+          statusEl.textContent = 'Error: ' + (data.error || 'Analysis failed');
           $('errorBox').hidden = false;
           $('errorJson').textContent = JSON.stringify({
             error: data.error,
@@ -96,14 +98,13 @@
 
         const ai = data.openai && !data.openai.error ? data.openai : null;
         if (!ai) {
-          statusEl.textContent = 'OpenAI response missing. Check OPENAI_API_KEY.';
+          statusEl.textContent = 'Response missing.';
           $('raw').hidden = false;
           return;
         }
 
         $('hoursAI').textContent    = ai?.total_hours != null ? Number(ai.total_hours).toFixed(2) : '—';
         $('sessionsAI').textContent = ai?.sessions ?? '—';
-
         if (ai.first || ai.last) {
           $('firstTs').textContent = ai.first ? new Date(ai.first).toLocaleString() : '—';
           $('lastTs').textContent  = ai.last  ? new Date(ai.last).toLocaleString()  : '—';
@@ -112,11 +113,34 @@
 
         statusEl.textContent = 'Done.';
         $('results').hidden = false;
+
+        // Store for report
+        reportData = {
+          file: name,
+          totalHours: ai.total_hours,
+          sessions: ai.sessions,
+          first: ai.first,
+          last: ai.last
+        };
+        $('downloadReport').hidden = false;
       } catch (e) {
         $('status').textContent = 'Error: ' + e.message;
         $('raw').hidden = false;
       }
     })();
+
+    // Download report as .txt
+    document.getElementById('downloadReport').addEventListener('click', () => {
+      if (!reportData) return;
+      const text = `ChatGPT Usage Report\n\nFile: ${reportData.file}\nTotal Hours: ${reportData.totalHours}\nSessions: ${reportData.sessions}\nFirst: ${reportData.first}\nLast: ${reportData.last}`;
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'chatgpt_usage_report.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   </script>
 </body>
 </html>
